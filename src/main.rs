@@ -19,12 +19,15 @@
 //! - Make this reasonable to run nightly
 //! - Attach this to something like [Koblime](https://kobli.me/) to sync each
 //!   day's new articles directly to device.
+//! - Group short reads together, separate long reads to individual epubs
+//! - Create/update readwise tags for grouped articles ('epub-yyyy-mm-dd')
+//! - Create title pages using local templates
 //!
 
 use itertools::Itertools;
 use reqwest::{header, Method};
 use serde::{Deserialize, Serialize};
-use std::{process::Stdio, time::Duration};
+use std::{path::PathBuf, process::Stdio, time::Duration};
 use time::OffsetDateTime;
 use tokio::{fs::File, io::AsyncWriteExt};
 
@@ -89,6 +92,7 @@ async fn main() {
     let mut cursor = None;
     let mut acc = vec![];
 
+    // fetch all articles in readwise inbox
     loop {
         let uri = if let Some(cursor) = cursor {
             format!("https://readwise.io/api/v3/list/?location=new&pageCursor={cursor}")
@@ -116,6 +120,7 @@ async fn main() {
             break;
         }
 
+        // don't exceed API rate limit
         tokio::time::sleep(Duration::from_millis(60000 / 20)).await;
     }
 
@@ -172,7 +177,7 @@ async fn main() {
         }
     }
 
-    // Group remaining articles into approx 1 hour chunks
+    // group remaining articles into approx 1 hour chunks of reading
     let mut remainder = remainder
         .into_iter()
         .fold((0, vec![vec![]]), |(word_count, mut groups), item| {
@@ -196,13 +201,14 @@ async fn main() {
     groups.append(&mut remainder);
 
     let _ = tokio::fs::create_dir_all("epubs").await;
+    let basepath = PathBuf::from("epubs");
 
     println!("Creating {} groups of articles", groups.len());
     for (name, group) in groups {
         let mut num = 1;
         let mut filename = format!("readwise-{}.epub", name);
         let mut title = name.to_string();
-        while let Ok(true) = tokio::fs::try_exists(&filename).await {
+        while let Ok(true) = tokio::fs::try_exists(&basepath.join(&filename)).await {
             num += 1;
             filename = format!("readwise-{name}-{num}.epub",);
             title = format!("{name} Pt. {}", num);
